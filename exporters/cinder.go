@@ -22,6 +22,11 @@ type CinderExporter struct {
 	BaseOpenStackExporter
 }
 
+type cinderVolumeWithExt struct {
+	volumes.Volume
+	volumetenants.VolumeTenantExt
+}
+
 var volume_status = []string{
 	"creating",
 	"available",
@@ -91,12 +96,7 @@ func NewCinderExporter(config *ExporterConfig, logger log.Logger) (*CinderExport
 }
 
 func ListVolumesStatus(exporter *BaseOpenStackExporter, ch chan<- prometheus.Metric) error {
-	type VolumeWithExt struct {
-		volumes.Volume
-		volumetenants.VolumeTenantExt
-	}
-
-	var allVolumes []VolumeWithExt
+	var allVolumes []cinderVolumeWithExt
 
 	allPagesVolumes, err := volumes.List(exporter.Client, volumes.ListOpts{
 		AllTenants: true,
@@ -109,6 +109,8 @@ func ListVolumesStatus(exporter *BaseOpenStackExporter, ch chan<- prometheus.Met
 	if err != nil {
 		return err
 	}
+
+	allVolumes = deduplicateCinderVolumes(allVolumes)
 
 	// Volume status metrics
 	for _, volume := range allVolumes {
@@ -126,12 +128,7 @@ func ListVolumesStatus(exporter *BaseOpenStackExporter, ch chan<- prometheus.Met
 }
 
 func ListVolumes(exporter *BaseOpenStackExporter, ch chan<- prometheus.Metric) error {
-	type VolumeWithExt struct {
-		volumes.Volume
-		volumetenants.VolumeTenantExt
-	}
-
-	var allVolumes []VolumeWithExt
+	var allVolumes []cinderVolumeWithExt
 
 	allPagesVolumes, err := volumes.List(exporter.Client, volumes.ListOpts{
 		AllTenants: true,
@@ -144,6 +141,8 @@ func ListVolumes(exporter *BaseOpenStackExporter, ch chan<- prometheus.Metric) e
 	if err != nil {
 		return err
 	}
+
+	allVolumes = deduplicateCinderVolumes(allVolumes)
 
 	ch <- prometheus.MustNewConstMetric(exporter.Metrics["volumes"].Metric,
 		prometheus.GaugeValue, float64(len(allVolumes)))
@@ -198,6 +197,36 @@ func ListVolumes(exporter *BaseOpenStackExporter, ch chan<- prometheus.Metric) e
 	}
 
 	return nil
+}
+
+func deduplicateCinderVolumes(volumes []cinderVolumeWithExt) []cinderVolumeWithExt {
+	seen := make(map[string]struct{}, len(volumes))
+	deduplicated := make([]cinderVolumeWithExt, 0, len(volumes))
+
+	for _, volume := range volumes {
+		key := volume.ID
+		if key == "" {
+			key = strings.Join([]string{
+				volume.Name,
+				volume.Status,
+				volume.AvailabilityZone,
+				volume.Bootable,
+				volume.TenantID,
+				volume.UserID,
+				volume.VolumeType,
+				strconv.Itoa(volume.Size),
+			}, "\x00")
+		}
+
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
+		deduplicated = append(deduplicated, volume)
+	}
+
+	return deduplicated
 }
 
 func ListSnapshots(exporter *BaseOpenStackExporter, ch chan<- prometheus.Metric) error {
