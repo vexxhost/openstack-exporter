@@ -174,6 +174,34 @@ curl "https://localhost:9180/probe?cloud=test.cloud&include_services=network,com
 curl "https://localhost:9180/probe?cloud=test.cloud&exclude_services=load-balancer,dns"
 ```
 
+### Prometheus target labels
+
+Prometheus alerting rules often group target health by labels such as `job`,
+`namespace`, and `service`. These labels are scrape target labels, not metrics
+emitted by the exporter itself. When scraping the exporter through Kubernetes
+objects such as a `ServiceMonitor` or `PodMonitor`, make sure the scrape
+configuration preserves or sets stable values for those labels.
+
+For example, a pod-based scrape should preserve the Kubernetes namespace and
+set a stable service label if no Service object is part of the scrape target:
+
+```yaml
+relabelings:
+  - sourceLabels:
+      - __meta_kubernetes_pod_name
+    targetLabel: instance
+  - sourceLabels:
+      - __meta_kubernetes_namespace
+    targetLabel: namespace
+  - targetLabel: service
+    replacement: openstack-exporter
+```
+
+Avoid dropping `namespace` or `service` labels from exporter scrape targets
+unless the corresponding alerting rules also avoid relying on those labels.
+Otherwise alerts may still fire correctly, but their grouping and annotations
+can lose the context needed to identify the affected target.
+
 ### OpenStack configuration
 
 The cloud credentials and identity configuration
